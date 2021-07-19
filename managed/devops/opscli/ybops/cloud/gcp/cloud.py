@@ -277,6 +277,9 @@ class GcpCloud(AbstractCloud):
         instance = self.get_host_info(args)
         self.get_admin().update_disk(args, instance['id'])
 
+    def change_instance_type(self, args, newInstanceType):
+        self.get_admin().change_instance_type(args.zone, args.search_pattern, newInstanceType)
+
     def get_per_region_meta(self, args):
         if hasattr(args, "custom_payload") and args.custom_payload:
             metadata = json.loads(args.custom_payload).get("perRegionMetadata")

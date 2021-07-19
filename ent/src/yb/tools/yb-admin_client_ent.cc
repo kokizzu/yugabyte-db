@@ -330,7 +330,7 @@ Result<rapidjson::Document> ClusterAdminClient::ListSnapshotRestorations(
 }
 
 Result<rapidjson::Document> ClusterAdminClient::CreateSnapshotSchedule(
-    const std::vector<client::YBTableName>& tables, MonoDelta interval, MonoDelta retention) {
+    const client::YBTableName& keyspace, MonoDelta interval, MonoDelta retention) {
   RpcController rpc;
   rpc.set_timeout(timeout_);
   master::CreateSnapshotScheduleRequestPB req;
@@ -338,9 +338,7 @@ Result<rapidjson::Document> ClusterAdminClient::CreateSnapshotSchedule(
 
   auto& options = *req.mutable_options();
   auto& filter_tables = *options.mutable_filter()->mutable_tables()->mutable_tables();
-  for (const YBTableName& table_name : tables) {
-    table_name.SetIntoTableIdentifierPB(filter_tables.Add());
-  }
+  keyspace.SetIntoTableIdentifierPB(filter_tables.Add());
 
   options.set_interval_sec(interval.ToSeconds());
   options.set_retention_duration_sec(retention.ToSeconds());
@@ -384,11 +382,37 @@ Result<rapidjson::Document> ClusterAdminClient::ListSnapshotSchedules(
     AddStringField("id", VERIFY_RESULT(FullyDecodeSnapshotScheduleId(schedule.id())).ToString(),
                    &json_schedule, &result.GetAllocator());
 
+    const auto& filter = schedule.options().filter();
+    string filter_output;
+    // The user input should only have 1 entry, at namespace level.
+    if (filter.tables().tables_size() == 1) {
+      const auto& table_id = filter.tables().tables(0);
+      if (table_id.has_namespace_()) {
+        string database_type;
+        if (table_id.namespace_().database_type() == YQL_DATABASE_PGSQL) {
+          database_type = "ysql";
+        } else if (table_id.namespace_().database_type() == YQL_DATABASE_CQL) {
+          database_type = "ycql";
+        }
+        if (!database_type.empty()) {
+          filter_output = Format("$0.$1", database_type, table_id.namespace_().name());
+        }
+      }
+    }
+    // If the user input was non standard, just display the whole debug PB.
+    if (filter_output.empty()) {
+      filter_output = filter.ShortDebugString();
+      DCHECK(false) << "Non standard filter " << filter_output;
+    }
     rapidjson::Value options(rapidjson::kObjectType);
-    AddStringField("interval", MonoDelta::FromSeconds(schedule.options().interval_sec()).ToString(),
+    AddStringField("filter", filter_output, &options, &result.GetAllocator());
+    auto interval_min = schedule.options().interval_sec() / MonoTime::kSecondsPerMinute;
+    AddStringField("interval",
+                   Format("$0 min", interval_min),
                    &options, &result.GetAllocator());
+    auto retention_min = schedule.options().retention_duration_sec() / MonoTime::kSecondsPerMinute;
     AddStringField("retention",
-                   MonoDelta::FromSeconds(schedule.options().retention_duration_sec()).ToString(),
+                   Format("$0 min", retention_min),
                    &options, &result.GetAllocator());
     auto delete_time = HybridTime::FromPB(schedule.options().delete_time());
     if (delete_time) {
@@ -1146,6 +1170,27 @@ Status ClusterAdminClient::ListCDCStreams(const TableId& table_id) {
   return Status::OK();
 }
 
+Status ClusterAdminClient::WaitForSetupUniverseReplicationToFinish(const string& producer_uuid) {
+  master::IsSetupUniverseReplicationDoneRequestPB req;
+  req.set_producer_id(producer_uuid);
+  for (;;) {
+    master::IsSetupUniverseReplicationDoneResponsePB resp;
+    RpcController rpc;
+    rpc.set_timeout(timeout_);
+    Status s = master_proxy_->IsSetupUniverseReplicationDone(req, &resp, &rpc);
+
+    if (!s.ok() || resp.has_error()) {
+        LOG(WARNING) << "Encountered error while waiting for setup_universe_replication to complete"
+                     << " : " << (!s.ok() ? s.ToString() : resp.error().status().message());
+    } else if (resp.has_done() && resp.done()) {
+      return StatusFromPB(resp.replication_error());
+    }
+
+    // Still processing, wait and then loop again.
+    std::this_thread::sleep_for(100ms);
+  }
+}
+
 Status ClusterAdminClient::SetupUniverseReplication(
     const string& producer_uuid, const vector<string>& producer_addresses,
     const vector<TableId>& tables,
@@ -1178,6 +1223,8 @@ Status ClusterAdminClient::SetupUniverseReplication(
     cout << "Error setting up universe replication: " << resp.error().status().message() << endl;
     return StatusFromPB(resp.error().status());
   }
+
+  RETURN_NOT_OK(WaitForSetupUniverseReplicationToFinish(producer_uuid));
 
   cout << "Replication setup successfully" << endl;
   return Status::OK();
@@ -1240,6 +1287,9 @@ Status ClusterAdminClient::AlterUniverseReplication(const std::string& producer_
     cout << "Error altering universe replication: " << resp.error().status().message() << endl;
     return StatusFromPB(resp.error().status());
   }
+
+  // Wait for the altered producer to be deleted (this happens once it is merged with the original).
+  RETURN_NOT_OK(WaitForSetupUniverseReplicationToFinish(producer_uuid + ".ALTER"));
 
   cout << "Replication altered successfully" << endl;
   return Status::OK();

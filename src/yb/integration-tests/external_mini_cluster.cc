@@ -885,7 +885,7 @@ Status ExternalMiniCluster::AddTServerToLeaderBlacklist(
   return Status::OK();
 }
 
-Status ExternalMiniCluster::EmptyBlacklist(
+Status ExternalMiniCluster::ClearBlacklist(
     ExternalMaster* master) {
   GetMasterClusterConfigRequestPB config_req;
   GetMasterClusterConfigResponsePB config_resp;
@@ -1172,7 +1172,7 @@ Status ExternalMiniCluster::StartMasters() {
 
 Status ExternalMiniCluster::WaitForInitDb() {
   const auto start_time = std::chrono::steady_clock::now();
-  const auto kTimeout = NonTsanVsTsan(900s, 1800s);
+  const auto kTimeout = NonTsanVsTsan(1200s, 1800s);
   int num_timeouts = 0;
   const int kMaxTimeouts = 10;
   while (true) {
@@ -1412,7 +1412,7 @@ Result<std::vector<ListTabletsForTabletServerResponsePB::Entry>> ExternalMiniClu
   ListTabletsForTabletServerResponsePB resp;
 
   rpc::RpcController rpc;
-  rpc.set_timeout(MonoDelta::FromSeconds(10));
+  rpc.set_timeout(10s * kTimeMultiplier);
   RETURN_NOT_OK(proxy.ListTabletsForTabletServer(req, &resp, &rpc));
 
   std::vector<ListTabletsForTabletServerResponsePB::Entry> result;
@@ -1679,7 +1679,7 @@ void ExternalMiniCluster::ConfigureClientBuilder(client::YBClientBuilder* builde
   }
 }
 
-HostPort ExternalMiniCluster::DoGetLeaderMasterBoundRpcAddr() {
+Result<HostPort> ExternalMiniCluster::DoGetLeaderMasterBoundRpcAddr() {
   return GetLeaderMaster()->bound_rpc_addr();
 }
 

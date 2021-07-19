@@ -108,6 +108,9 @@ class MasterServiceImpl : public MasterServiceIf,
   void ListTabletServers(const ListTabletServersRequestPB* req,
                          ListTabletServersResponsePB* resp,
                          rpc::RpcContext rpc) override;
+  void ListLiveTabletServers(const ListLiveTabletServersRequestPB* req,
+                         ListLiveTabletServersResponsePB* resp,
+                         rpc::RpcContext rpc) override;
 
   void CreateNamespace(const CreateNamespaceRequestPB* req,
                        CreateNamespaceResponsePB* resp,
@@ -318,6 +321,10 @@ class MasterServiceImpl : public MasterServiceIf,
   void GetUniverseReplication(const GetUniverseReplicationRequestPB* req,
                               GetUniverseReplicationResponsePB* resp,
                               rpc::RpcContext rpc) override;
+
+  void IsSetupUniverseReplicationDone(const IsSetupUniverseReplicationDoneRequestPB* req,
+                                      IsSetupUniverseReplicationDoneResponsePB* resp,
+                                      rpc::RpcContext rpc) override;
 
   void SplitTablet(
       const SplitTabletRequestPB* req, SplitTabletResponsePB* resp, rpc::RpcContext rpc) override;

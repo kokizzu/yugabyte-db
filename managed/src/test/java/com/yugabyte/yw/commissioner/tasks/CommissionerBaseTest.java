@@ -2,18 +2,40 @@
 
 package com.yugabyte.yw.commissioner.tasks;
 
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
+import static play.inject.Bindings.bind;
+
 import com.yugabyte.yw.cloud.AWSInitializer;
 import com.yugabyte.yw.cloud.GCPInitializer;
+import com.yugabyte.yw.commissioner.BaseTaskDependencies;
 import com.yugabyte.yw.commissioner.CallHome;
 import com.yugabyte.yw.commissioner.HealthChecker;
 import com.yugabyte.yw.commissioner.QueryAlerts;
-import com.yugabyte.yw.common.*;
+import com.yugabyte.yw.common.AccessManager;
+import com.yugabyte.yw.common.ApiHelper;
+import com.yugabyte.yw.common.CloudQueryHelper;
+import com.yugabyte.yw.common.ConfigHelper;
+import com.yugabyte.yw.common.DnsManager;
+import com.yugabyte.yw.common.KubernetesManager;
+import com.yugabyte.yw.common.ModelFactory;
+import com.yugabyte.yw.common.NetworkManager;
+import com.yugabyte.yw.common.NodeManager;
+import com.yugabyte.yw.common.SwamperHelper;
+import com.yugabyte.yw.common.TableManager;
 import com.yugabyte.yw.common.alerts.AlertConfigurationWriter;
+import com.yugabyte.yw.common.alerts.AlertDefinitionGroupService;
+import com.yugabyte.yw.common.alerts.AlertDefinitionService;
+import com.yugabyte.yw.common.alerts.AlertService;
+import com.yugabyte.yw.common.config.impl.SettableRuntimeConfigFactory;
 import com.yugabyte.yw.common.services.YBClientService;
 import com.yugabyte.yw.models.Customer;
 import com.yugabyte.yw.models.Provider;
 import com.yugabyte.yw.models.TaskInfo;
+import java.util.Map;
+import java.util.UUID;
 import org.junit.Before;
+import org.mockito.Mock;
 import org.pac4j.play.CallbackController;
 import org.pac4j.play.store.PlayCacheSessionStore;
 import org.pac4j.play.store.PlaySessionStore;
@@ -22,16 +44,10 @@ import org.yb.client.IsServerReadyResponse;
 import org.yb.client.YBClient;
 import org.yb.master.Master;
 import play.Application;
+import play.Environment;
 import play.inject.guice.GuiceApplicationBuilder;
 import play.test.Helpers;
 import play.test.WithApplication;
-
-import java.util.Map;
-import java.util.UUID;
-
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
-import static play.inject.Bindings.bind;
 
 public abstract class CommissionerBaseTest extends WithApplication {
   private int maxRetryCount = 200;
@@ -54,6 +70,11 @@ public abstract class CommissionerBaseTest extends WithApplication {
   protected ApiHelper mockApiHelper;
   protected QueryAlerts mockQueryAlerts;
   protected AlertConfigurationWriter mockAlertConfigurationWriter;
+  protected AlertService alertService;
+  protected AlertDefinitionService alertDefinitionService;
+  protected AlertDefinitionGroupService alertDefinitionGroupService;
+
+  @Mock protected BaseTaskDependencies mockBaseTaskDependencies;
 
   Customer defaultCustomer;
   Provider defaultProvider;
@@ -64,6 +85,24 @@ public abstract class CommissionerBaseTest extends WithApplication {
     defaultCustomer = ModelFactory.testCustomer();
     defaultProvider = ModelFactory.awsProvider(defaultCustomer);
     gcpProvider = ModelFactory.gcpProvider(defaultCustomer);
+    alertService = new AlertService();
+    alertDefinitionService = new AlertDefinitionService(alertService);
+    SettableRuntimeConfigFactory configFactory = new SettableRuntimeConfigFactory(app.config());
+    alertDefinitionGroupService =
+        new AlertDefinitionGroupService(alertDefinitionService, configFactory);
+
+    when(mockBaseTaskDependencies.getApplication()).thenReturn(app);
+    when(mockBaseTaskDependencies.getConfig()).thenReturn(app.config());
+    when(mockBaseTaskDependencies.getConfigHelper()).thenReturn(mockConfigHelper);
+    when(mockBaseTaskDependencies.getEnvironment())
+        .thenReturn(app.injector().instanceOf(Environment.class));
+    when(mockBaseTaskDependencies.getYbService()).thenReturn(mockYBClient);
+    when(mockBaseTaskDependencies.getTableManager()).thenReturn(mockTableManager);
+    when(mockBaseTaskDependencies.getAlertService()).thenReturn(alertService);
+    when(mockBaseTaskDependencies.getAlertDefinitionService()).thenReturn(alertDefinitionService);
+    when(mockBaseTaskDependencies.getRuntimeConfigFactory()).thenReturn(configFactory);
+    when(mockBaseTaskDependencies.getAlertDefinitionGroupService())
+        .thenReturn(alertDefinitionGroupService);
   }
 
   @Override
@@ -109,6 +148,7 @@ public abstract class CommissionerBaseTest extends WithApplication {
         .overrides(bind(ApiHelper.class).toInstance(mockApiHelper))
         .overrides(bind(QueryAlerts.class).toInstance(mockQueryAlerts))
         .overrides(bind(AlertConfigurationWriter.class).toInstance(mockAlertConfigurationWriter))
+        .overrides(bind(BaseTaskDependencies.class).toInstance(mockBaseTaskDependencies))
         .build();
   }
 

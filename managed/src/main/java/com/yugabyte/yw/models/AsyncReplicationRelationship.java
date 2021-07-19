@@ -3,15 +3,29 @@ package com.yugabyte.yw.models;
 import com.fasterxml.jackson.databind.JsonNode;
 import io.ebean.Finder;
 import io.ebean.Model;
+import java.util.List;
+import java.util.UUID;
+import javax.persistence.Column;
+import javax.persistence.Entity;
+import javax.persistence.Id;
+import javax.persistence.JoinColumn;
+import javax.persistence.ManyToOne;
+import javax.persistence.Table;
+import javax.persistence.UniqueConstraint;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import play.data.validation.Constraints;
 import play.libs.Json;
 
-import javax.persistence.*;
-import java.util.List;
-import java.util.UUID;
-
+@Table(
+    uniqueConstraints =
+        @UniqueConstraint(
+            columnNames = {
+              "source_universe_uuid",
+              "source_table_id",
+              "target_universe_uuid",
+              "target_table_id"
+            }))
 @Entity
 public class AsyncReplicationRelationship extends Model {
 
@@ -32,7 +46,7 @@ public class AsyncReplicationRelationship extends Model {
 
   @Constraints.Required
   @Column(nullable = false)
-  public UUID sourceTableUUID;
+  public String sourceTableID;
 
   @ManyToOne
   @Constraints.Required
@@ -41,7 +55,7 @@ public class AsyncReplicationRelationship extends Model {
 
   @Constraints.Required
   @Column(nullable = false)
-  public UUID targetTableUUID;
+  public String targetTableID;
 
   @Constraints.Required
   @Column(nullable = false)
@@ -49,16 +63,16 @@ public class AsyncReplicationRelationship extends Model {
 
   public static AsyncReplicationRelationship create(
       Universe sourceUniverse,
-      UUID sourceTableUUID,
+      String sourceTableID,
       Universe targetUniverse,
-      UUID targetTableUUID,
+      String targetTableID,
       boolean active) {
     AsyncReplicationRelationship relationship = new AsyncReplicationRelationship();
     relationship.uuid = UUID.randomUUID();
     relationship.sourceUniverse = sourceUniverse;
-    relationship.sourceTableUUID = sourceTableUUID;
+    relationship.sourceTableID = sourceTableID;
     relationship.targetUniverse = targetUniverse;
-    relationship.targetTableUUID = targetTableUUID;
+    relationship.targetTableID = targetTableID;
     relationship.active = active;
     relationship.save();
     return relationship;
@@ -70,16 +84,26 @@ public class AsyncReplicationRelationship extends Model {
 
   public static AsyncReplicationRelationship get(
       UUID sourceUniverseUUID,
-      UUID sourceTableUUID,
+      String sourceTableID,
       UUID targetUniverseUUID,
-      UUID targetTableUUID) {
+      String targetTableID) {
     return find.query()
         .where()
         .eq("source_universe_uuid", sourceUniverseUUID)
-        .eq("source_table_uuid", sourceTableUUID)
+        .eq("source_table_id", sourceTableID)
         .eq("target_universe_uuid", targetUniverseUUID)
-        .eq("target_table_uuid", targetTableUUID)
+        .eq("target_table_id", targetTableID)
         .findOne();
+  }
+
+  public static List<AsyncReplicationRelationship> getByTargetUniverseUUID(
+      UUID targetUniverseUUID) {
+    return find.query().where().eq("target_universe_uuid", targetUniverseUUID).findList();
+  }
+
+  public static List<AsyncReplicationRelationship> getBySourceUniverseUUID(
+      UUID sourceUniverseUUID) {
+    return find.query().where().eq("source_universe_uuid", sourceUniverseUUID).findList();
   }
 
   public static boolean delete(UUID asyncReplicationRelationshipUUID) {
@@ -96,9 +120,9 @@ public class AsyncReplicationRelationship extends Model {
     return Json.newObject()
         .put("uuid", uuid.toString())
         .put("sourceUniverseUUID", sourceUniverse.universeUUID.toString())
-        .put("sourceTableUUID", sourceTableUUID.toString())
+        .put("sourceTableID", sourceTableID)
         .put("targetUniverseUUID", targetUniverse.universeUUID.toString())
-        .put("targetTableUUID", targetTableUUID.toString())
+        .put("targetTableID", targetTableID)
         .put("active", active);
   }
 
@@ -108,12 +132,12 @@ public class AsyncReplicationRelationship extends Model {
         + uuid
         + ", sourceUniverseUUID="
         + sourceUniverse.universeUUID
-        + ", sourceTableUUID="
-        + sourceTableUUID
+        + ", sourceTableID="
+        + sourceTableID
         + ", targetUniverseUUID="
         + targetUniverse.universeUUID
-        + ", targetTableUUID="
-        + targetTableUUID
+        + ", targetTableID="
+        + targetTableID
         + ", active="
         + active
         + "]";

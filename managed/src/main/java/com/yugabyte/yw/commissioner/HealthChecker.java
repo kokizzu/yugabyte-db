@@ -19,15 +19,48 @@ import com.google.inject.Inject;
 import com.google.inject.Singleton;
 import com.typesafe.config.Config;
 import com.yugabyte.yw.commissioner.Common.CloudType;
-import com.yugabyte.yw.common.*;
+import com.yugabyte.yw.common.EmailHelper;
+import com.yugabyte.yw.common.HealthManager;
+import com.yugabyte.yw.common.PlacementInfoUtil;
+import com.yugabyte.yw.common.ShellResponse;
+import com.yugabyte.yw.common.Util;
+import com.yugabyte.yw.common.alerts.AlertDefinitionLabelsBuilder;
+import com.yugabyte.yw.common.alerts.AlertService;
 import com.yugabyte.yw.common.alerts.SmtpData;
 import com.yugabyte.yw.common.config.RuntimeConfigFactory;
 import com.yugabyte.yw.forms.CustomerRegisterFormData.AlertingData;
 import com.yugabyte.yw.forms.UniverseDefinitionTaskParams;
-import com.yugabyte.yw.models.*;
+import com.yugabyte.yw.models.AccessKey;
+import com.yugabyte.yw.models.Alert;
+import com.yugabyte.yw.models.AlertDefinitionGroup;
+import com.yugabyte.yw.models.Customer;
+import com.yugabyte.yw.models.CustomerConfig;
+import com.yugabyte.yw.models.CustomerTask;
+import com.yugabyte.yw.models.HealthCheck;
+import com.yugabyte.yw.models.HighAvailabilityConfig;
+import com.yugabyte.yw.models.Provider;
+import com.yugabyte.yw.models.Universe;
+import com.yugabyte.yw.models.filters.AlertFilter;
+import com.yugabyte.yw.models.helpers.KnownAlertCodes;
+import com.yugabyte.yw.models.helpers.KnownAlertLabels;
 import com.yugabyte.yw.models.helpers.NodeDetails;
 import io.prometheus.client.CollectorRegistry;
 import io.prometheus.client.Gauge;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import javax.mail.MessagingException;
 import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -36,11 +69,6 @@ import play.inject.ApplicationLifecycle;
 import play.libs.Json;
 import scala.concurrent.ExecutionContext;
 import scala.concurrent.duration.Duration;
-
-import javax.mail.MessagingException;
-import java.util.*;
-import java.util.concurrent.*;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 @Singleton
 public class HealthChecker {
@@ -51,8 +79,6 @@ public class HealthChecker {
   public static final String kUnivNameLabel = "univ_name";
   public static final String kCheckLabel = "check_name";
   public static final String kNodeLabel = "node";
-
-  @VisibleForTesting static final String ALERT_ERROR_CODE = "HEALTH_CHECKER_FAILURE";
 
   private static final String MAX_NUM_THREADS_KEY = "yb.health.max_num_parallel_checks";
 
@@ -81,7 +107,7 @@ public class HealthChecker {
 
   private final EmailHelper emailHelper;
 
-  private final AlertManager alertManager;
+  private final AlertService alertService;
 
   private final RuntimeConfigFactory runtimeConfigFactory;
 
@@ -102,7 +128,7 @@ public class HealthChecker {
       CollectorRegistry promRegistry,
       HealthCheckerReport healthCheckerReport,
       EmailHelper emailHelper,
-      AlertManager alertManager,
+      AlertService alertService,
       RuntimeConfigFactory runtimeConfigFactory,
       ApplicationLifecycle lifecycle) {
     this.actorSystem = actorSystem;
@@ -112,7 +138,7 @@ public class HealthChecker {
     this.promRegistry = promRegistry;
     this.healthCheckerReport = healthCheckerReport;
     this.emailHelper = emailHelper;
-    this.alertManager = alertManager;
+    this.alertService = alertService;
     this.runtimeConfigFactory = runtimeConfigFactory;
     this.lifecycle = lifecycle;
     this.executor = this.createExecutor();
@@ -128,7 +154,7 @@ public class HealthChecker {
       HealthManager healthManager,
       HealthCheckerReport healthCheckerReport,
       EmailHelper emailHelper,
-      AlertManager alertManager,
+      AlertService alertService,
       RuntimeConfigFactory runtimeConfigFactory,
       ApplicationLifecycle lifecycle) {
     this(
@@ -139,7 +165,7 @@ public class HealthChecker {
         CollectorRegistry.defaultRegistry,
         healthCheckerReport,
         emailHelper,
-        alertManager,
+        alertService,
         runtimeConfigFactory,
         lifecycle);
   }
@@ -221,7 +247,13 @@ public class HealthChecker {
             durationMs);
 
         if (!hasErrors) {
-          alertManager.resolveAlerts(c.uuid, u.universeUUID, ALERT_ERROR_CODE);
+          AlertFilter filter =
+              AlertFilter.builder()
+                  .customerUuid(c.getUuid())
+                  .errorCode(KnownAlertCodes.HEALTH_CHECKER_FAILURE)
+                  .label(KnownAlertLabels.TARGET_UUID, u.universeUUID.toString())
+                  .build();
+          alertService.markResolved(filter);
         }
 
       } catch (Exception e) {
@@ -331,16 +363,15 @@ public class HealthChecker {
   }
 
   private void createAlert(Customer c, Universe u, String details) {
-    Alert.create(
-        c.uuid,
-        u.universeUUID,
-        Alert.TargetType.UniverseType,
-        ALERT_ERROR_CODE,
-        "Warning",
-        details,
-        true,
-        null,
-        Collections.emptyList());
+    Alert alert =
+        new Alert()
+            .setCustomerUUID(c.getUuid())
+            .setErrCode(KnownAlertCodes.HEALTH_CHECKER_FAILURE)
+            .setSeverity(AlertDefinitionGroup.Severity.WARNING)
+            .setMessage(details)
+            .setSendEmail(true)
+            .setLabels(AlertDefinitionLabelsBuilder.create().appendTarget(u).getAlertLabels());
+    alertService.save(alert);
   }
 
   static class CheckSingleUniverseParams {

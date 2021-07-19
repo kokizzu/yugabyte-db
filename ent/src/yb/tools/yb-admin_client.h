@@ -47,7 +47,7 @@ class ClusterAdminClient : public yb::tools::ClusterAdminClient {
   CHECKED_STATUS CreateNamespaceSnapshot(const TypedNamespaceName& ns);
   Result<rapidjson::Document> ListSnapshotRestorations(
       const TxnSnapshotRestorationId& restoration_id);
-  Result<rapidjson::Document> CreateSnapshotSchedule(const std::vector<client::YBTableName>& tables,
+  Result<rapidjson::Document> CreateSnapshotSchedule(const client::YBTableName& keyspace,
                                                      MonoDelta interval, MonoDelta retention);
   Result<rapidjson::Document> ListSnapshotSchedules(const SnapshotScheduleId& schedule_id);
   Result<rapidjson::Document> DeleteSnapshotSchedule(const SnapshotScheduleId& schedule_id);
@@ -100,6 +100,8 @@ class ClusterAdminClient : public yb::tools::ClusterAdminClient {
                                           const std::vector<std::string>& producer_addresses,
                                           const std::vector<TableId>& add_tables,
                                           const std::vector<TableId>& remove_tables);
+
+  CHECKED_STATUS WaitForSetupUniverseReplicationToFinish(const string& producer_uuid);
 
   CHECKED_STATUS SetUniverseReplicationEnabled(const std::string& producer_id,
                                                bool is_enabled);
